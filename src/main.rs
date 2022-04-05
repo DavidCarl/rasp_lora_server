@@ -11,7 +11,7 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 
 use oscore::edhoc::{
     api::{Msg1Receiver, Msg3Receiver},
-    error::{Error, OwnError, OwnOrPeerError},
+    error::{OwnError, OwnOrPeerError},
     PartyR,
 };
 
@@ -83,10 +83,8 @@ fn main() {
     lora_recieve();
 }
 
-fn load_file(path: String) -> String {
-    let data = fs::read_to_string(path).expect("Unable to read file");
-    //rintln!("{}", data);
-    data
+fn _load_file(path: String) -> String {
+    fs::read_to_string(path).expect("Unable to read file")
 }
 
 fn setup_sx127x() -> LoRa<Spi, OutputPin, OutputPin> {
@@ -102,6 +100,8 @@ fn setup_sx127x() -> LoRa<Spi, OutputPin, OutputPin> {
 
 fn lora_recieve() {
     let mut lora = setup_sx127x();
+    lora.set_signal_bandwidth(125000);
+    lora.set_spreading_factor(7);
     let mut msg3_receivers: HashMap<[u8; 4], PartyR<Msg3Receiver>> = HashMap::new(); //PartyR<Msg3Receiver>> = HashMap::new();
     let mut lora_ratchets: HashMap<[u8; 4], state> = HashMap::new();
     loop {
@@ -143,7 +143,7 @@ fn lora_recieve() {
                                     Err(_) => println!("Error"),
                                 }
                             }
-                            Error => {
+                            _ => {
                                 println!("Something in the code died!");
                             }
                         }
@@ -189,7 +189,11 @@ fn lora_recieve() {
                     5 => {
                         println!("Recieved m type 5");
                         let incoming = &buffer;
-                        let devaddr: [u8; 4] = buffer[14..18].try_into().unwrap();
+                        let (lora_rtn, lora_ratchets_rtn) =
+                            handle_ratchet_message(incoming.to_vec(), lora, lora_ratchets);
+                        lora = lora_rtn;
+                        lora_ratchets = lora_ratchets_rtn;
+                        /*let
                         let ratchet = lora_ratchets.remove(&devaddr);
                         match ratchet {
                             Some(mut lora_ratchet) => {
@@ -203,7 +207,7 @@ fn lora_recieve() {
                                     };
                                 if !sendnew {
                                 } else {
-                                    println!("sending {:?}", newout);
+                                    //println!("sending {:?}", newout);
                                     let (msg_buffer, len) = lora_send(newout);
                                     //println!("msg 4 {:?}", msg_buffer);
                                     let transmit = lora.transmit_payload_busy(msg_buffer, len);
@@ -219,10 +223,16 @@ fn lora_recieve() {
                                 //println!("n {}", n);
                             }
                             None => println!("No ratchet on this devaddr"),
-                        }
+                        }*/
                     }
                     7 => {
                         println!("Recieved m type 7");
+                        let incoming = &buffer;
+                        let (lora_rtn, lora_ratchets_rtn) =
+                            handle_ratchet_message(incoming.to_vec(), lora, lora_ratchets);
+                        lora = lora_rtn;
+                        lora_ratchets = lora_ratchets_rtn;
+                        /*
                         let incoming = &buffer;
                         let devaddr: [u8; 4] = buffer[14..18].try_into().unwrap();
                         let ratchet = lora_ratchets.remove(&devaddr);
@@ -238,7 +248,7 @@ fn lora_recieve() {
                                     };
                                 if !sendnew {
                                 } else {
-                                    println!("sending {:?}", newout);
+                                    //println!("sending {:?}", newout);
                                     let (msg_buffer, len) = lora_send(newout);
                                     //println!("msg 4 {:?}", msg_buffer);
                                     let transmit = lora.transmit_payload_busy(msg_buffer, len);
@@ -254,7 +264,7 @@ fn lora_recieve() {
                                 //println!("n {}", n);
                             }
                             None => println!("No ratchet on this devaddr"),
-                        }
+                        } */
                     }
                     _ => {
                         // All other messages
@@ -262,13 +272,6 @@ fn lora_recieve() {
                         println!("other message! {:?}", msg)
                     }
                 }
-                //let s = String::from_utf8(buffer.to_vec()).unwrap();
-
-                /*for i in 0..size {
-                    //println!("{}", buffer[i] as char);
-                }*/
-                ////println!("{:?}", s);
-                //println!();
             }
             Err(_) => println!("Timeout"),
         }
@@ -280,7 +283,7 @@ fn handle_first_gen_second_message(
     msg1_receiver: PartyR<Msg1Receiver>,
 ) -> Result<(Vec<u8>, PartyR<Msg3Receiver>, [u8; 4]), OwnOrPeerError> {
     //println!{"Recieved msg {:?}", msg}
-    let (msg2_sender, ad_r, ad_i) = match msg1_receiver.handle_message_1(msg) {
+    let (msg2_sender, _ad_r, _ad_i) = match msg1_receiver.handle_message_1(msg) {
         Err(OwnError(b)) => {
             //println!("sending error {:?}, ", b);
             return Err(OwnOrPeerError::OwnError(b)); //Ok(b); // we really shoulnt fail on the first message
@@ -316,7 +319,7 @@ fn handle_first_gen_second_message(
 }
 
 fn handle_third_gen_fourth_message(
-    mut msg: Vec<u8>,
+    msg: Vec<u8>,
     msg3_receiver: PartyR<Msg3Receiver>,
     i_static_pub: PublicKey,
 ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>), OwnOrPeerError> {
@@ -325,7 +328,7 @@ fn handle_third_gen_fourth_message(
 
     //let tup3 = msg3_receiver.handle_message_3(msg,&i_static_pub.as_bytes().to_vec());
 
-    let (msg3verifier, r_kid) = match msg3_receiver.handle_message_3(msg) {
+    let (msg3verifier, _r_kid) = match msg3_receiver.handle_message_3(msg) {
         Err(OwnOrPeerError::PeerError(s)) => {
             panic!("Error during  {}", s)
         }
@@ -366,8 +369,48 @@ fn handle_third_gen_fourth_message(
     // sending message 2
     //let mut payload4 = [3].to_vec();
     //payload4.extend(msg4_bytes);
-    return Ok((msg4_bytes, r_sck, r_rck, r_master));
+    Ok((msg4_bytes, r_sck, r_rck, r_master))
     //stream.write(&payload4)?;
+}
+
+fn handle_ratchet_message(
+    buffer: Vec<u8>,
+    mut lora: LoRa<Spi, OutputPin, OutputPin>,
+    mut lora_ratchets: HashMap<[u8; 4], state>,
+) -> (LoRa<Spi, OutputPin, OutputPin>, HashMap<[u8; 4], state>) {
+    let incoming = &buffer;
+    let devaddr: [u8; 4] = buffer[14..18].try_into().unwrap();
+    let ratchet = lora_ratchets.remove(&devaddr);
+    match ratchet {
+        Some(mut lora_ratchet) => {
+            let (newout, sendnew) = match lora_ratchet.r_receive(&incoming.to_vec()) {
+                Some((x, b)) => (x, b),
+                None => {
+                    println!("error has happened {:?}", incoming);
+                    lora_ratchets.insert(devaddr, lora_ratchet);
+                    return (lora, lora_ratchets);
+                }
+            };
+            if !sendnew {
+            } else {
+                //println!("sending {:?}", newout);
+                let (msg_buffer, len) = lora_send(newout);
+                //println!("msg 4 {:?}", msg_buffer);
+                let transmit = lora.transmit_payload_busy(msg_buffer, len);
+                match transmit {
+                    Ok(packet_size) => {
+                        println!("Sent packet with size: {:?}", packet_size)
+                    }
+                    Err(_) => println!("Error"),
+                }
+            }
+            lora_ratchets.insert(devaddr, lora_ratchet);
+            //n += 1;
+            //println!("n {}", n);
+        }
+        None => println!("No ratchet on this devaddr"),
+    }
+    (lora, lora_ratchets)
 }
 
 fn prepare_message(msg: Vec<u8>, mtype: u8, devaddr: [u8; 4], first_msg: bool) -> Vec<u8> {
@@ -386,14 +429,14 @@ fn prepare_message(msg: Vec<u8>, mtype: u8, devaddr: [u8; 4], first_msg: bool) -
 
 fn unpack_edhoc_first_message(msg: Vec<u8>) -> Vec<u8> {
     let msg = &msg[1..]; // fjerne mtype
-    let framecounter = &msg[0..2]; // gemme framecounter
+    let _framecounter = &msg[0..2]; // gemme framecounter
     let msg = &msg[2..]; // fjerne frame counter
     msg.to_vec()
 }
 
 fn unpack_edhoc_message(msg: Vec<u8>) -> (Vec<u8>, [u8; 4]) {
     let msg = &msg[1..]; // fjerne mtype
-    let framecounter = &msg[0..2]; // gemme framecounter
+    let _framecounter = &msg[0..2]; // gemme framecounter
     let msg = &msg[2..]; // fjerne frame counter
     let devaddr = msg[0..4].try_into().unwrap();
     let msg = &msg[4..];
@@ -408,7 +451,7 @@ fn lora_send(message: Vec<u8>) -> ([u8; 255], usize) {
     (buffer, message.len())
 }
 
-fn convert_id_to_string(id: Vec<u8>) -> String {
+fn _convert_id_to_string(id: Vec<u8>) -> String {
     serde_json::to_string(&id).unwrap()
 }
 
