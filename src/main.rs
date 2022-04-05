@@ -87,7 +87,7 @@ fn _load_file(path: String) -> String {
     fs::read_to_string(path).expect("Unable to read file")
 }
 
-fn setup_sx127x() -> LoRa<Spi, OutputPin, OutputPin> {
+fn setup_sx127x(bandwidth: i64, spreadfactor: u8) -> LoRa<Spi, OutputPin, OutputPin> {
     let spi = Spi::new(Bus::Spi0, SlaveSelect::Ss0, 8_000_000, Mode::Mode0).unwrap();
 
     let gpio = Gpio::new().unwrap();
@@ -95,13 +95,14 @@ fn setup_sx127x() -> LoRa<Spi, OutputPin, OutputPin> {
     let cs = gpio.get(LORA_CS_PIN).unwrap().into_output();
     let reset = gpio.get(LORA_RESET_PIN).unwrap().into_output();
 
-    sx127x_lora::LoRa::new(spi, cs, reset, FREQUENCY, &mut Delay).unwrap()
+    let mut lora = sx127x_lora::LoRa::new(spi, cs, reset, FREQUENCY, &mut Delay).unwrap();
+    let _ = lora.set_signal_bandwidth(bandwidth);
+    let _ = lora.set_spreading_factor(spreadfactor);
+    lora
 }
 
 fn lora_recieve() {
-    let mut lora = setup_sx127x();
-    lora.set_signal_bandwidth(125000);
-    lora.set_spreading_factor(7);
+    let mut lora = setup_sx127x(125000, 7);
     let mut msg3_receivers: HashMap<[u8; 4], PartyR<Msg3Receiver>> = HashMap::new(); //PartyR<Msg3Receiver>> = HashMap::new();
     let mut lora_ratchets: HashMap<[u8; 4], state> = HashMap::new();
     loop {
@@ -112,11 +113,13 @@ fn lora_recieve() {
                 let buffer = lora.read_packet().unwrap(); // Received buffer. NOTE: 255 bytes are always returned
                 match buffer[0] {
                     0 => {
+                        println!("Recieved m type 0");
                         let rtn = m_type_zero(buffer, msg3_receivers, lora);
                         msg3_receivers = rtn.msg3_receivers;
                         lora = rtn.lora;
                     }
                     2 => {
+                        println!("Recieved m type 2");
                         let rtn = m_type_two(buffer, msg3_receivers, lora_ratchets, lora);
                         msg3_receivers = rtn.msg3_receivers;
                         lora_ratchets = rtn.lora_ratchets;
@@ -137,9 +140,7 @@ fn lora_recieve() {
                         lora_ratchets = rtn.lora_ratchets;
                     }
                     _ => {
-                        // All other messages
-                        let msg = &buffer[1..];
-                        println!("other message! {:?}", msg)
+                        println!("Recieved m type _");
                     }
                 }
             }
@@ -371,7 +372,6 @@ fn m_type_two(
     let payload = handle_third_gen_fourth_message(msg.to_vec(), msg3rec, i_static_pub);
     match payload {
         Ok(msg4) => {
-            println!("{:?}", devaddr);
             let msg = prepare_message(msg4.msg4_bytes, 3, devaddr, false);
             let (msg_buffer, len) = lora_send(msg);
             let transmit = lora.transmit_payload_busy(msg_buffer, len);
