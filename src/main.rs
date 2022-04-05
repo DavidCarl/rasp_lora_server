@@ -10,9 +10,8 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 // EDHOC
 
 use oscore::edhoc::{
-    api::{Msg1Receiver, Msg2Sender, Msg3Receiver},
+    api::{Msg1Receiver, Msg3Receiver},
     error::{Error, OwnError, OwnOrPeerError},
-    util::build_error_message,
     PartyR,
 };
 
@@ -104,7 +103,7 @@ fn setup_sx127x() -> LoRa<Spi, OutputPin, OutputPin> {
 fn lora_recieve() {
     let mut lora = setup_sx127x();
     let mut msg3_receivers: HashMap<[u8; 4], PartyR<Msg3Receiver>> = HashMap::new(); //PartyR<Msg3Receiver>> = HashMap::new();
-    let mut lora_ratchet: HashMap<[u8; 4], state> = HashMap::new();
+    let mut lora_ratchets: HashMap<[u8; 4], state> = HashMap::new();
     loop {
         let poll = lora.poll_irq(None, &mut Delay); //30 Second timeout
         match poll {
@@ -145,7 +144,7 @@ fn lora_recieve() {
                                 }
                             }
                             Error => {
-                                //println!("Something in the code died!");
+                                println!("Something in the code died!");
                             }
                         }
                     }
@@ -161,6 +160,7 @@ fn lora_recieve() {
                             handle_third_gen_fourth_message(msg.to_vec(), msg3rec, i_static_pub);
                         match payload {
                             Ok((msg, r_sck, r_rck, r_master)) => {
+                                println!("{:?}", devaddr);
                                 //println!("msg 4 before {:?}", msg);
                                 let msg = prepare_message(msg, 3, devaddr, false);
                                 let (msg_buffer, len) = lora_send(msg);
@@ -179,17 +179,87 @@ fn lora_recieve() {
                                     r_sck.try_into().unwrap(),
                                     devaddr.to_vec(),
                                 );
-                                lora_ratchet.insert(devaddr, r_ratchet);
+                                lora_ratchets.insert(devaddr, r_ratchet);
                             }
                             Err(_) => {
                                 println!("ERROR IN MESSAGE 3 AND 4")
                             }
                         }
                     }
+                    5 => {
+                        println!("Recieved m type 5");
+                        let incoming = &buffer;
+                        let devaddr: [u8; 4] = buffer[14..18].try_into().unwrap();
+                        let ratchet = lora_ratchets.remove(&devaddr);
+                        match ratchet {
+                            Some(mut lora_ratchet) => {
+                                let (newout, sendnew) =
+                                    match lora_ratchet.r_receive(&incoming.to_vec()) {
+                                        Some((x, b)) => (x, b),
+                                        None => {
+                                            println!("error has happened {:?}", incoming);
+                                            continue;
+                                        }
+                                    };
+                                if !sendnew {
+                                } else {
+                                    println!("sending {:?}", newout);
+                                    let (msg_buffer, len) = lora_send(newout);
+                                    //println!("msg 4 {:?}", msg_buffer);
+                                    let transmit = lora.transmit_payload_busy(msg_buffer, len);
+                                    match transmit {
+                                        Ok(packet_size) => {
+                                            println!("Sent packet with size: {:?}", packet_size)
+                                        }
+                                        Err(_) => println!("Error"),
+                                    }
+                                }
+                                lora_ratchets.insert(devaddr, lora_ratchet);
+                                //n += 1;
+                                //println!("n {}", n);
+                            }
+                            None => println!("No ratchet on this devaddr"),
+                        }
+                    }
+                    7 => {
+                        println!("Recieved m type 7");
+                        let incoming = &buffer;
+                        let devaddr: [u8; 4] = buffer[14..18].try_into().unwrap();
+                        let ratchet = lora_ratchets.remove(&devaddr);
+                        match ratchet {
+                            Some(mut lora_ratchet) => {
+                                let (newout, sendnew) =
+                                    match lora_ratchet.r_receive(&incoming.to_vec()) {
+                                        Some((x, b)) => (x, b),
+                                        None => {
+                                            println!("error has happened {:?}", incoming);
+                                            continue;
+                                        }
+                                    };
+                                if !sendnew {
+                                } else {
+                                    println!("sending {:?}", newout);
+                                    let (msg_buffer, len) = lora_send(newout);
+                                    //println!("msg 4 {:?}", msg_buffer);
+                                    let transmit = lora.transmit_payload_busy(msg_buffer, len);
+                                    match transmit {
+                                        Ok(packet_size) => {
+                                            println!("Sent packet with size: {:?}", packet_size)
+                                        }
+                                        Err(_) => println!("Error"),
+                                    }
+                                }
+                                lora_ratchets.insert(devaddr, lora_ratchet);
+                                //n += 1;
+                                //println!("n {}", n);
+                            }
+                            None => println!("No ratchet on this devaddr"),
+                        }
+                    }
                     _ => {
                         // All other messages
                         let msg = &buffer[1..];
-                        //println!("other message! {:?}", msg)
+                        println!("other message! {:?}", msg)
                     }
                 }
                 //let s = String::from_utf8(buffer.to_vec()).unwrap();
