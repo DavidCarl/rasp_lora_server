@@ -112,159 +112,29 @@ fn lora_recieve() {
                 let buffer = lora.read_packet().unwrap(); // Received buffer. NOTE: 255 bytes are always returned
                 match buffer[0] {
                     0 => {
-                        // initialize handshake
-                        // respond with message
-                        //let msg = &buffer[1..];
-                        let msg = unpack_edhoc_first_message(buffer);
-                        //println!("msg1.len {:?}", msg.len());
-
-                        // først når den modtager besked
-                        let r_static_priv = StaticSecret::from(R_STATIC_MATERIAL);
-                        let r_static_pub = PublicKey::from(&r_static_priv);
-
-                        let r_kid = [0xA3].to_vec();
-                        let mut r: StdRng = StdRng::from_entropy();
-                        let r_ephemeral_keying = r.gen::<[u8; 32]>();
-
-                        let msg1_receiver =
-                            PartyR::new(r_ephemeral_keying, r_static_priv, r_static_pub, r_kid);
-                        let res = handle_first_gen_second_message(msg.to_vec(), msg1_receiver);
-                        match res {
-                            Ok((msg, msg3, devaddr)) => {
-                                //println!("{:?}", msg);
-                                //println!("{:?}", devaddr);
-                                msg3_receivers.insert(devaddr, msg3);
-                                let (msg_buffer, len) = lora_send(msg);
-                                let transmit = lora.transmit_payload_busy(msg_buffer, len);
-                                match transmit {
-                                    Ok(packet_size) => {
-                                        println!("Sent packet with size: {:?}", packet_size)
-                                    }
-                                    Err(_) => println!("Error"),
-                                }
-                            }
-                            _ => {
-                                println!("Something in the code died!");
-                            }
-                        }
+                        let rtn = m_type_zero(buffer, msg3_receivers, lora);
+                        msg3_receivers = rtn.msg3_receivers;
+                        lora = rtn.lora;
                     }
                     2 => {
-                        //
-                        //let msg = &buffer[1..];
-                        let (msg, devaddr) = unpack_edhoc_message(buffer);
-                        // //println!("{:?}", msg3_receivers.contains_key(&devaddr));
-                        let msg3rec = msg3_receivers.remove(&devaddr).unwrap();
-                        let i_static_pub = PublicKey::from(I_STATIC_PK_MATERIAL);
-
-                        let payload =
-                            handle_third_gen_fourth_message(msg.to_vec(), msg3rec, i_static_pub);
-                        match payload {
-                            Ok((msg, r_sck, r_rck, r_master)) => {
-                                println!("{:?}", devaddr);
-                                //println!("msg 4 before {:?}", msg);
-                                let msg = prepare_message(msg, 3, devaddr, false);
-                                let (msg_buffer, len) = lora_send(msg);
-                                //println!("msg 4 {:?}", msg_buffer);
-                                let transmit = lora.transmit_payload_busy(msg_buffer, len);
-                                match transmit {
-                                    Ok(packet_size) => {
-                                        println!("Sent packet with size: {:?}", packet_size)
-                                    }
-                                    Err(_) => println!("Error"),
-                                }
-                                //Create ratchet
-                                let r_ratchet = state::init_r(
-                                    r_master.try_into().unwrap(),
-                                    r_rck.try_into().unwrap(),
-                                    r_sck.try_into().unwrap(),
-                                    devaddr.to_vec(),
-                                );
-                                lora_ratchets.insert(devaddr, r_ratchet);
-                            }
-                            Err(_) => {
-                                println!("ERROR IN MESSAGE 3 AND 4")
-                            }
-                        }
+                        let rtn = m_type_two(buffer, msg3_receivers, lora_ratchets, lora);
+                        msg3_receivers = rtn.msg3_receivers;
+                        lora_ratchets = rtn.lora_ratchets;
+                        lora = rtn.lora;
                     }
                     5 => {
                         println!("Recieved m type 5");
                         let incoming = &buffer;
-                        let (lora_rtn, lora_ratchets_rtn) =
-                            handle_ratchet_message(incoming.to_vec(), lora, lora_ratchets);
-                        lora = lora_rtn;
-                        lora_ratchets = lora_ratchets_rtn;
-                        /*let
-                        let ratchet = lora_ratchets.remove(&devaddr);
-                        match ratchet {
-                            Some(mut lora_ratchet) => {
-                                let (newout, sendnew) =
-                                    match lora_ratchet.r_receive(&incoming.to_vec()) {
-                                        Some((x, b)) => (x, b),
-                                        None => {
-                                            println!("error has happened {:?}", incoming);
-                                            continue;
-                                        }
-                                    };
-                                if !sendnew {
-                                } else {
-                                    //println!("sending {:?}", newout);
-                                    let (msg_buffer, len) = lora_send(newout);
-                                    //println!("msg 4 {:?}", msg_buffer);
-                                    let transmit = lora.transmit_payload_busy(msg_buffer, len);
-                                    match transmit {
-                                        Ok(packet_size) => {
-                                            println!("Sent packet with size: {:?}", packet_size)
-                                        }
-                                        Err(_) => println!("Error"),
-                                    }
-                                }
-                                lora_ratchets.insert(devaddr, lora_ratchet);
-                                //n += 1;
-                                //println!("n {}", n);
-                            }
-                            None => println!("No ratchet on this devaddr"),
-                        }*/
+                        let rtn = handle_ratchet_message(incoming.to_vec(), lora, lora_ratchets);
+                        lora = rtn.lora;
+                        lora_ratchets = rtn.lora_ratchets;
                     }
                     7 => {
                         println!("Recieved m type 7");
                         let incoming = &buffer;
-                        let (lora_rtn, lora_ratchets_rtn) =
-                            handle_ratchet_message(incoming.to_vec(), lora, lora_ratchets);
-                        lora = lora_rtn;
-                        lora_ratchets = lora_ratchets_rtn;
-                        /*
-                        let incoming = &buffer;
-                        let devaddr: [u8; 4] = buffer[14..18].try_into().unwrap();
-                        let ratchet = lora_ratchets.remove(&devaddr);
-                        match ratchet {
-                            Some(mut lora_ratchet) => {
-                                let (newout, sendnew) =
-                                    match lora_ratchet.r_receive(&incoming.to_vec()) {
-                                        Some((x, b)) => (x, b),
-                                        None => {
-                                            println!("error has happened {:?}", incoming);
-                                            continue;
-                                        }
-                                    };
-                                if !sendnew {
-                                } else {
-                                    //println!("sending {:?}", newout);
-                                    let (msg_buffer, len) = lora_send(newout);
-                                    //println!("msg 4 {:?}", msg_buffer);
-                                    let transmit = lora.transmit_payload_busy(msg_buffer, len);
-                                    match transmit {
-                                        Ok(packet_size) => {
-                                            println!("Sent packet with size: {:?}", packet_size)
-                                        }
-                                        Err(_) => println!("Error"),
-                                    }
-                                }
-                                lora_ratchets.insert(devaddr, lora_ratchet);
-                                //n += 1;
-                                //println!("n {}", n);
-                            }
-                            None => println!("No ratchet on this devaddr"),
-                        } */
+                        let rtn = handle_ratchet_message(incoming.to_vec(), lora, lora_ratchets);
+                        lora = rtn.lora;
+                        lora_ratchets = rtn.lora_ratchets;
                     }
                     _ => {
                         // All other messages
@@ -278,15 +148,19 @@ fn lora_recieve() {
     }
 }
 
+struct Msg2 {
+    msg: Vec<u8>,
+    msg3_receiver: PartyR<Msg3Receiver>,
+    devaddr: [u8; 4],
+}
+
 fn handle_first_gen_second_message(
     msg: Vec<u8>,
     msg1_receiver: PartyR<Msg1Receiver>,
-) -> Result<(Vec<u8>, PartyR<Msg3Receiver>, [u8; 4]), OwnOrPeerError> {
-    //println!{"Recieved msg {:?}", msg}
+) -> Result<Msg2, OwnOrPeerError> {
     let (msg2_sender, _ad_r, _ad_i) = match msg1_receiver.handle_message_1(msg) {
         Err(OwnError(b)) => {
-            //println!("sending error {:?}, ", b);
-            return Err(OwnOrPeerError::OwnError(b)); //Ok(b); // we really shoulnt fail on the first message
+            return Err(OwnOrPeerError::OwnError(b)); 
         }
         Ok(val) => val,
     };
@@ -296,38 +170,35 @@ fn handle_first_gen_second_message(
             panic!("Received error msg: {}", s)
         }
         Err(OwnOrPeerError::OwnError(b)) => {
-            //println!("ERRRRRRRRRRRRRRRRRRRRRRROR");
             return Err(OwnOrPeerError::OwnError(b));
         }
         Ok(val) => val,
     };
 
-    //println!("{:?}", msg2_bytes.len());
-
-    //let mut payload2 = [1].to_vec();
     // generate dev id, make sure its unique!
     // TODO: Make sure dev_addr is unique!
     let devaddr: [u8; 4] = rand::random();
-    //println!("\n DevAddr {:?}\n", devaddr);
-    //payload2.extend(dev_addr);
-    //payload2.extend(msg2_bytes);
-    //println!("Before prepare {:?}", msg2_bytes);
     let msg = prepare_message(msg2_bytes, 1, devaddr, false);
-    //println!("After prepare {:?}", msg);
 
-    Ok((msg, msg3_receiver, devaddr))
+    Ok(Msg2 {
+        msg,
+        msg3_receiver,
+        devaddr,
+    })
+}
+
+struct Msg4 {
+    msg4_bytes: Vec<u8>,
+    r_sck: Vec<u8>,
+    r_rck: Vec<u8>,
+    r_master: Vec<u8>,
 }
 
 fn handle_third_gen_fourth_message(
     msg: Vec<u8>,
     msg3_receiver: PartyR<Msg3Receiver>,
     i_static_pub: PublicKey,
-) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>), OwnOrPeerError> {
-    //println!("Third message {:?}", msg);
-    //println!("Third message len {:?}", msg.len());
-
-    //let tup3 = msg3_receiver.handle_message_3(msg,&i_static_pub.as_bytes().to_vec());
-
+) -> Result<Msg4, OwnOrPeerError> {
     let (msg3verifier, _r_kid) = match msg3_receiver.handle_message_3(msg) {
         Err(OwnOrPeerError::PeerError(s)) => {
             panic!("Error during  {}", s)
@@ -366,18 +237,24 @@ fn handle_third_gen_fourth_message(
         Ok(val) => val,
     };
 
-    // sending message 2
-    //let mut payload4 = [3].to_vec();
-    //payload4.extend(msg4_bytes);
-    Ok((msg4_bytes, r_sck, r_rck, r_master))
-    //stream.write(&payload4)?;
+    Ok(Msg4 {
+        msg4_bytes,
+        r_sck,
+        r_rck,
+        r_master,
+    })
+}
+
+struct RatchetMessage {
+    lora: LoRa<Spi, OutputPin, OutputPin>,
+    lora_ratchets: HashMap<[u8; 4], state>,
 }
 
 fn handle_ratchet_message(
     buffer: Vec<u8>,
     mut lora: LoRa<Spi, OutputPin, OutputPin>,
     mut lora_ratchets: HashMap<[u8; 4], state>,
-) -> (LoRa<Spi, OutputPin, OutputPin>, HashMap<[u8; 4], state>) {
+) -> RatchetMessage {
     let incoming = &buffer;
     let devaddr: [u8; 4] = buffer[14..18].try_into().unwrap();
     let ratchet = lora_ratchets.remove(&devaddr);
@@ -388,7 +265,10 @@ fn handle_ratchet_message(
                 None => {
                     println!("error has happened {:?}", incoming);
                     lora_ratchets.insert(devaddr, lora_ratchet);
-                    return (lora, lora_ratchets);
+                    return RatchetMessage {
+                        lora,
+                        lora_ratchets,
+                    }
                 }
             };
             if !sendnew {
@@ -410,7 +290,10 @@ fn handle_ratchet_message(
         }
         None => println!("No ratchet on this devaddr"),
     }
-    (lora, lora_ratchets)
+    RatchetMessage {
+        lora,
+        lora_ratchets,
+    }
 }
 
 fn prepare_message(msg: Vec<u8>, mtype: u8, devaddr: [u8; 4], first_msg: bool) -> Vec<u8> {
@@ -425,6 +308,97 @@ fn prepare_message(msg: Vec<u8>, mtype: u8, devaddr: [u8; 4], first_msg: bool) -
     }
     buffer.extend_from_slice(&msg);
     buffer
+}
+
+struct TypeZero {
+    msg3_receivers: HashMap<[u8; 4], PartyR<Msg3Receiver>>,
+    lora: LoRa<Spi, OutputPin, OutputPin>,
+}
+
+fn m_type_zero(
+    buffer: Vec<u8>,
+    mut msg3_receivers: HashMap<[u8; 4], PartyR<Msg3Receiver>>,
+    mut lora: LoRa<Spi, OutputPin, OutputPin>,
+) -> TypeZero {
+    let msg = unpack_edhoc_first_message(buffer);
+    let r_static_priv = StaticSecret::from(R_STATIC_MATERIAL);
+    let r_static_pub = PublicKey::from(&r_static_priv);
+
+    let r_kid = [0xA3].to_vec();
+    let mut r: StdRng = StdRng::from_entropy();
+    let r_ephemeral_keying = r.gen::<[u8; 32]>();
+
+    let msg1_receiver = PartyR::new(r_ephemeral_keying, r_static_priv, r_static_pub, r_kid);
+    let res = handle_first_gen_second_message(msg.to_vec(), msg1_receiver);
+    match res {
+        Ok(rtn) => {
+            msg3_receivers.insert(rtn.devaddr, rtn.msg3_receiver);
+            let (msg_buffer, len) = lora_send(rtn.msg);
+            let transmit = lora.transmit_payload_busy(msg_buffer, len);
+            match transmit {
+                Ok(packet_size) => {
+                    println!("Sent packet with size: {:?}", packet_size)
+                }
+                Err(_) => println!("Error"),
+            }
+        }
+        _ => {
+            println!("Something in the code died!");
+        }
+    }
+    TypeZero {
+        msg3_receivers,
+        lora,
+    }
+}
+
+struct TypeTwo {
+    msg3_receivers: HashMap<[u8; 4], PartyR<Msg3Receiver>>,
+    lora_ratchets: HashMap<[u8; 4], state>,
+    lora: LoRa<Spi, OutputPin, OutputPin>,
+}
+
+fn m_type_two(
+    buffer: Vec<u8>,
+    mut msg3_receivers: HashMap<[u8; 4], PartyR<Msg3Receiver>>,
+    mut lora_ratchets: HashMap<[u8; 4], state>,
+    mut lora: LoRa<Spi, OutputPin, OutputPin>,
+) -> TypeTwo {
+    let (msg, devaddr) = unpack_edhoc_message(buffer);
+    let msg3rec = msg3_receivers.remove(&devaddr).unwrap();
+    let i_static_pub = PublicKey::from(I_STATIC_PK_MATERIAL);
+
+    let payload = handle_third_gen_fourth_message(msg.to_vec(), msg3rec, i_static_pub);
+    match payload {
+        Ok(msg4) => {
+            println!("{:?}", devaddr);
+            let msg = prepare_message(msg4.msg4_bytes, 3, devaddr, false);
+            let (msg_buffer, len) = lora_send(msg);
+            let transmit = lora.transmit_payload_busy(msg_buffer, len);
+            match transmit {
+                Ok(packet_size) => {
+                    println!("Sent packet with size: {:?}", packet_size)
+                }
+                Err(_) => println!("Error"),
+            }
+            //Create ratchet
+            let r_ratchet = state::init_r(
+                msg4.r_master.try_into().unwrap(),
+                msg4.r_rck.try_into().unwrap(),
+                msg4.r_sck.try_into().unwrap(),
+                devaddr.to_vec(),
+            );
+            lora_ratchets.insert(devaddr, r_ratchet);
+        }
+        Err(_) => {
+            println!("ERROR IN MESSAGE 3 AND 4")
+        }
+    }
+    TypeTwo {
+        msg3_receivers,
+        lora_ratchets,
+        lora,
+    }
 }
 
 fn unpack_edhoc_first_message(msg: Vec<u8>) -> Vec<u8> {
